@@ -1,0 +1,33 @@
+category,group,kind,fixed
+# kind: income | expense | transfer.  fixed: fixed | variable (expenses only)
+Salary,Income,income,
+Interest,Income,income,
+Other income,Income,income,
+Rent,Housing,expense,fixed
+Loan interest,Housing,expense,fixed
+Operating costs,Housing,expense,fixed
+Energy,Housing,expense,fixed
+Internet & phone,Housing,expense,fixed
+Fees & taxes,Housing,expense,fixed
+Insurance,Insurance,expense,fixed
+Groceries,Food,expense,variable
+Restaurants & cafés,Food,expense,variable
+Drugstore,Household,expense,variable
+Shopping,Shopping,expense,variable
+Clothing,Shopping,expense,variable
+Gifts,Shopping,expense,variable
+Fuel,Transport,expense,variable
+Public transport,Transport,expense,variable
+Travel,Leisure,expense,variable
+Sport,Leisure,expense,variable
+Subscriptions,Leisure,expense,fixed
+Cash,Cash,expense,variable
+Household,Household,expense,variable
+Mobility,Transport,expense,variable
+Leisure,Leisure,expense,variable
+Health,Health,expense,variable
+Education,Education,expense,fixed
+Credit card,Other,expense,variable
+Other,Other,expense,variable
+Transfer,Transfer,transfer,
+Exchange,Transfer,transfer,

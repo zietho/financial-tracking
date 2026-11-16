@@ -1,0 +1,23 @@
+[project]
+name = "financial-tracking"
+version = "0.1.0"
+description = "Local household finance pipeline: bank exports -> DuckDB -> HTML report"
+requires-python = ">=3.12"
+dependencies = [
+    "duckdb>=1.1",
+    "plotly>=5.24",
+    "playwright>=1.48",
+    "keyring>=25",
+    "pyjwt[crypto]>=2.9",
+    "certifi>=2024.8",
+    "pdfplumber>=0.11",
+]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

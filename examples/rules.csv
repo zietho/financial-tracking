@@ -1,0 +1,86 @@
+pattern,category,transfer_account
+# One rule per line. pattern = case-insensitive regex on "payee + memo + counterparty IBAN". First match wins,
+# so put specific rules above generic ones. Transfers between your own accounts are detected
+# by IBAN automatically; only add Transfer rules for cases without an IBAN (card settlement).
+# transfer_account = the account id from accounts.csv on the other side of that transfer.
+#
+# --- transfers without IBAN (account ids from your accounts.csv), e.g.
+# VISA Abrechnung,Transfer,visa
+# Payment from Alex,Transfer,revolut_alex
+#
+# --- currency exchanges inside one account (Revolut) and fees
+Exchanged to|EXCHANGE$,Exchange,
+Revolut fee,Fees & taxes,
+#
+# --- income
+Gehalt|Lohn|Urlaubsgeld|Weihnachtsgeld|Salary,Salary,
+DARLEHEN.*RATE|Kreditrate|Darlehensrate,Loan interest,
+Habenzinsen|Zinsgutschrift|Zinsen,Interest,
+#
+# --- housing & fixed costs
+Betriebskosten,Operating costs,
+Miete|Hausverwaltung|Immobilienverwaltung,Rent,
+Wien Energie|Verbund|\bEVN\b|Energie|Strom|\bGas\b,Energy,
+Magenta|A1 Telekom|HoT Telekom|\bDrei\b|Mobilfunk,Internet & phone,
+ORF|GIS,Fees & taxes,
+Versicherung|Generali|Uniqa|Allianz|Wiener Städtische,Insurance,
+#
+# --- food
+BILLA|\bSPAR\b|HOFER|LIDL|PENNY|MERKUR|INTERSPAR|EUROSPAR|MPREIS|UNIMARKT|WHOLE FOODS,Groceries,
+GASTHAUS|PIZZERIA|RESTAURANT|WIRTSHAUS|SUSHI|CAFE|LIEFERANDO|MJAM|WOLT,Restaurants & cafés,
+#
+# --- household & shopping
+DM DROGERIE|DM-FIL|BIPA|MUELLER|MÜLLER,Drugstore,
+AMAZON|ZALANDO|MEDIAMARKT|IKEA,Shopping,
+H&M|ZARA|PEEK & CLOPPENBURG|C&A|UNIQLO,Clothing,
+THALIA|MORAWA,Gifts,
+#
+# --- transport & travel
+\bOMV\b|\bBP |SHELL|\bENI\b|\bJET |TURMOEL,Fuel,
+Wiener Linien|OEBB|ÖBB|WESTBAHN|\bUBER\b|\bBOLT\b|One Mobility|KLIMATICKET,Public transport,
+BOOKING\.COM|AIRBNB|HOTEL|AUSTRIAN AIRLINES|RYANAIR|WIZZ|SKI AMADE,Travel,
+#
+# --- leisure
+BIKESHOP|GIGASPORT|INTERSPORT|DECATHLON|HERVIS|\bSPORT,Sport,
+NETFLIX|SPOTIFY|DISNEY|DPLAY|DISCOVERY\+|FITINN|JOHN HARRIS|FITNESS,Subscriptions,
+#
+# --- cash
+BANKOMAT|Behebung|Kartenbeheb|\bATM\b|Cash withdrawal,Cash,
+#
+# --- Trade Republic (memo starts with the type)
+Trade Republic (fee|tax),Fees & taxes,
+ BUY \|,Transfer,traderepublic_portfolio
+INTEREST_PAYMENT,Interest,
+DIVIDEND|BENEFITS_SAVEBACK|REFERRAL,Other income,
+#
+# --- more merchants
+BOULDER|KLETTER,Sport,
+BAECKEREI|BÄCKEREI|BACKEREI|BACKWERK|IMBISS|KEBAB|BOWL|BISTRO|GASTRO,Restaurants & cafés,
+Kartengebühr|KARTENGEBUEHR|Kontoführung|Gebühren,Fees & taxes,
+Schule|Kindergarten|Hort\b,Education,
+#
+# --- account closing fees / interest (Austrian banks: "Abschluss")
+^Abschluss|\| Abschluss,Fees & taxes,
+#
+# --- fallback: the bank's own category (some parsers put it into the memo as "kat:...").
+# Keep these last so your own rules win. "Familie & Freunde", "Veranlagung", "Sonstiges"
+# and "Einkünfte" are left out on purpose: check those yourself.
+kat:Lebensmittel,Groceries,
+kat:Versicherung,Insurance,
+kat:Kommunikation & Medien,Internet & phone,
+kat:Mobilität,Mobility,
+kat:Wohnen & Haushalt,Household,
+kat:Freizeit & Genuss,Leisure,
+kat:Gesundheit,Health,
+kat:Bildung,Education,
+kat:Bargeld,Cash,
+kat:Kleidung,Clothing,
+#
+# --- fallback: card merchant category codes (Trade Republic puts them into the memo as "mcc:NNNN")
+mcc:5411|mcc:5499,Groceries,
+mcc:581[234],Restaurants & cafés,
+mcc:554[12],Fuel,
+mcc:41(11|21|31),Public transport,
+mcc:5912,Health,
+mcc:5941,Sport,
+mcc:56(51|61|91|99),Clothing,

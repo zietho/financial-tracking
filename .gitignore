@@ -1,0 +1,43 @@
+# Private financial data – never commit.
+# All your own config lives in the repo root (or in DATA=<dir>); examples/ and the
+# generator in scripts/ are the shareable starting point.
+raw/
+out/
+/*.csv
+/*.json
+/*.xml
+/*.ofx
+/*.pdf
+/data/
+*.duckdb
+*.duckdb.wal
+
+# Our own notes and learnings: private, never pushed
+/private/
+
+# Our own bank parsers and their tests: private, never pushed
+pipeline/private_parsers.py
+tests/private/
+
+# Keys and secrets (Enable Banking key belongs in the Keychain, not here)
+*.pem
+*.key
+*.p12
+.env
+.env.*
+
+# Generated demo data (make sample)
+sample/
+
+# Playwright recordings can contain account numbers, names or typed values
+recordings/
+profiles/
+.playwright/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+.DS_Store
