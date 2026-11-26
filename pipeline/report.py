@@ -98,6 +98,20 @@ class Report:
         n_odd = self.one("SELECT count(*) FROM unusual WHERE month BETWEEN ? AND ?", self.start12, self.month)
         income = float(self.one("""SELECT sum(amount) FROM tx_enriched WHERE kind = 'income'
                                    AND month BETWEEN ? AND ?""", self.start12, self.month) or 0)
+        # money that went into non-cash assets: portfolios, pension, apartment, reserved equity, loan principal
+        put_to_work = float(self.one("""
+            WITH t AS (SELECT to_account acct, amount v FROM transfers WHERE month BETWEEN ? AND ?
+                       UNION ALL SELECT from_account, -amount FROM transfers WHERE month BETWEEN ? AND ?
+                       UNION ALL SELECT account, amount FROM tx WHERE month BETWEEN ? AND ?
+                                 AND category IN ('Stock compensation', 'Pension via payroll'))
+            SELECT sum(v) FROM t JOIN accounts a ON a.account = t.acct
+            WHERE a.type IN ('investment', 'pension', 'property', 'reserved', 'loan')""",
+            self.start12, self.month, self.start12, self.month, self.start12, self.month) or 0)
+        stock = float(self.one("""SELECT sum(amount) FROM tx_enriched WHERE month BETWEEN ? AND ?
+                                   AND category = 'Stock compensation'""", self.start12, self.month) or 0)
+        pension = float(self.one("""SELECT sum(amount) FROM tx_enriched WHERE month BETWEEN ? AND ?
+                                   AND category = 'Pension via payroll'""", self.start12, self.month) or 0)
+        cash_income = income - stock - pension
 
         def tile(label, value, sub, href):
             return (f'<a class="tile" href="{href}"><div class="tile-label">{label}</div>'
@@ -108,12 +122,16 @@ class Report:
             tile("Net worth", eur(nw_now),
                  f"{self.latest:%B %Y} · {nw[-2]['month']:%B}: {eur(nw[-2]['net_worth'])}" if len(nw) > 1 else f"{self.latest:%B %Y}",
                  "#networth"),
-            tile("Income", eur(income / 12), f"per month, last 12 months · {self.month:%B}: {eur(k.get('income'))}", "#time"),
+            tile("Income", eur(income / 12),
+                 f"per month: cash {eur(cash_income / 12)} · stock {eur(stock / 12)} · pension {eur(pension / 12)} · "
+                 f"{self.month:%B}: {eur(k.get('income'))}", "#income"),
             tile("Spending", eur(spent / 12),
-                 f"per month, last 12 months · {self.month:%B}: {eur(k.get('expenses'))}", "#where"),
-            tile("Left over", eur((income - spent) / 12),
-                 f"{pct((income - spent) / income) if income else '–'} of income · {self.month:%B}: "
-                 f"{eur(k.get('saved'))} ({pct(k.get('savings_rate'))})", "#networth"),
+                 f"per month, last 12 months · {self.month:%B}: {eur(k.get('expenses'))}", "#spending"),
+            tile("Savings rate", pct((income - spent) / income) if income else "–",
+                 f"last 12 months · cash only {pct((cash_income - spent) / cash_income) if cash_income else '–'} · "
+                 f"{self.month:%B}: {pct(k.get('savings_rate'))}", "#saved"),
+            tile("Could have saved", eur((income - spent) / 12),
+                 f"per month · put to work {eur(put_to_work / 12)} · stayed as cash {eur((income - spent - put_to_work) / 12)}", "#saved"),
             tile("Worth a look", str(n_odd), "unusual or one-off expenses", "#unusual"),
         ])
 
@@ -225,6 +243,116 @@ class Report:
             meta={"node_slots": slots, "link_src": col}))
         base_layout(fig, height=max(480, 22 * len(exp) + 80))
         return self.fig(fig)
+
+    # ------------------------------------------------------------ shared chart helpers
+    def months12(self) -> list:
+        return [i["month"] for i in self.rows("SELECT month FROM monthly WHERE month BETWEEN ? AND ? ORDER BY month",
+                                              self.start12, self.month)]
+
+    def stacked(self, months, series, height=340, line=None) -> str:
+        """Stacked monthly bars; series = [(name, values, slot or None for muted)], optional line = (name, values)."""
+        x = [f"{m:%b %y}" for m in months]
+        fig = go.Figure()
+        for name, ys, slot in series:
+            if not any(round(v) for v in ys):
+                continue
+            fig.add_bar(x=x, y=ys, name=name, meta={"slot": slot} if slot is not None else {"muted": True},
+                        marker_color=LIGHT["series"][slot] if slot is not None else LIGHT["muted"],
+                        hovertemplate="%{y:,.0f} €")
+        if line:
+            fig.add_scatter(x=x, y=line[1], name=line[0], mode="lines+markers", line=dict(width=2, color=LIGHT["ink"]),
+                            marker=dict(size=8), meta={"ink": "ink"}, hovertemplate="%{y:,.0f} €")
+        base_layout(fig, barmode="relative", hovermode="x unified", barcornerradius=4, height=height)
+        fig.update_traces(marker_line_width=2, marker_line_color=LIGHT["paper"], selector=dict(type="bar"))
+        fig.update_yaxes(tickprefix="€", tickformat=",.0f")
+        fig.update_xaxes(type="category", tickangle=0, nticks=7)
+        return self.fig(fig)
+
+    def hbars(self, parts) -> str:
+        """One bar per part, top to bottom as given, with "name  amount" written above each bar, so the bars
+        use the full width of a narrow column; parts = [(name, value, slot or None)]."""
+        parts = [(n, float(v), sl) for n, v, sl in parts if round(float(v))]
+        if not parts:
+            return '<p class="note">Nothing this month.</p>'
+        fig = go.Figure()
+        names = [n for n, _, _ in parts]
+        for name, value, slot in parts:
+            fig.add_bar(y=[name], x=[value], orientation="h", name=name,
+                        meta={"slot": slot} if slot is not None else {"muted": True},
+                        marker_color=LIGHT["series"][slot] if slot is not None else LIGHT["muted"],
+                        width=0.36, hovertemplate=f"{html.escape(name)}: %{{x:,.0f}} €<extra></extra>")
+            amount = f"{eur(value / 1000)}k" if abs(value) >= 10000 else eur(value)
+            fig.add_annotation(x=0, xref="paper", y=name, yref="y", yshift=19, xanchor="left", showarrow=False,
+                               text=f"{html.escape(name)}  <b>{amount}</b>", font=dict(size=12, color=LIGHT["ink2"]))
+        lo = min(0, min(v for _, v, _ in parts)); hi = max(0, max(v for _, v, _ in parts))
+        base_layout(fig, height=40 + 52 * len(parts), barcornerradius=4, showlegend=False)
+        fig.update_layout(margin=dict(l=4, r=12, t=20, b=4))
+        fig.update_xaxes(visible=False, range=[lo - (hi - lo) * 0.02, hi * 1.02 if hi else 1])
+        fig.update_yaxes(visible=False, categoryorder="array", categoryarray=list(reversed(names)))
+        return self.fig(fig)
+
+    def put_to_work(self, start: date, end: date) -> float:
+        """Money moved into non-cash assets: portfolios, pension, property, reserved equity, loan principal."""
+        return float(self.one("""
+            WITH t AS (SELECT to_account acct, amount v FROM transfers WHERE month BETWEEN ? AND ?
+                       UNION ALL SELECT from_account, -amount FROM transfers WHERE month BETWEEN ? AND ?
+                       UNION ALL SELECT account, amount FROM tx WHERE month BETWEEN ? AND ?
+                                 AND category IN ('Stock compensation', 'Pension via payroll'))
+            SELECT sum(v) FROM t JOIN accounts a ON a.account = t.acct
+            WHERE a.type IN ('investment', 'pension', 'property', 'reserved', 'loan')""",
+            start, end, start, end, start, end) or 0)
+
+    def group_slots(self) -> dict:
+        """Color per spending group, by 12-month total: the six largest get a color, the rest gray."""
+        r = self.rows("""SELECT "group" g, -sum(amount) s FROM tx_enriched WHERE kind = 'expense' AND month BETWEEN ? AND ?
+                         GROUP BY 1 ORDER BY s DESC""", self.start12, self.month)
+        top = [i["g"] for i in r if i["g"] != "Other"][:6]
+        return {g: i for i, g in enumerate(top)}
+
+    # ------------------------------------------------------------ income
+    def income_over_time(self) -> str:
+        months = self.months12()
+        r = self.rows("""SELECT month, CASE category WHEN 'Stock compensation' THEN 'stock'
+                                WHEN 'Pension via payroll' THEN 'pension' ELSE 'cash' END k, sum(amount) v
+                         FROM tx_enriched WHERE kind = 'income' AND month BETWEEN ? AND ? GROUP BY ALL""",
+                      self.start12, self.month)
+        get = lambda m, k: sum(float(i["v"]) for i in r if i["month"] == m and i["k"] == k)
+        return self.stacked(months, [("Cash", [get(m, "cash") for m in months], BLUE),
+                                     ("Stock (RSU)", [get(m, "stock") for m in months], MAGENTA),
+                                     ("Pension", [get(m, "pension") for m in months], VIOLET)])
+
+    def income_split(self) -> str:
+        short = {"Stock compensation": "RSU", "Pension via payroll": "Pension", "Family allowance": "Family allow.", "Other income": "Other"}
+        slot = lambda name: MAGENTA if name.startswith("Stock") else VIOLET if name.startswith("Pension") else BLUE
+        label = lambda name: " · ".join([short.get(name.split(" · ")[0], name.split(" · ")[0])] + name.split(" · ")[1:])
+        return self.hbars([(label(i["category"]), i["v"], slot(i["category"])) for i in self.income_by_person(self.month, self.month)])
+
+    # ------------------------------------------------------------ spending
+    def spending_over_time(self) -> str:
+        months = self.months12()
+        slots = self.group_slots()
+        r = self.rows("""SELECT month, "group" g, -sum(amount) s FROM tx_enriched WHERE kind = 'expense'
+                         AND month BETWEEN ? AND ? GROUP BY ALL""", self.start12, self.month)
+        series = [(g, [sum(float(i["s"]) for i in r if i["month"] == m and i["g"] == g) for m in months], sl)
+                  for g, sl in slots.items()]
+        series.append(("Other", [sum(float(i["s"]) for i in r if i["month"] == m and i["g"] not in slots) for m in months], None))
+        return self.stacked(months, series, height=360)
+
+    def spending_split(self) -> str:
+        slots = self.group_slots()
+        r = self.rows("""SELECT "group" g, -sum(amount) s FROM tx_enriched WHERE kind = 'expense' AND month = ?
+                         GROUP BY 1 ORDER BY s DESC""", self.month)
+        return self.hbars([(i["g"], float(i["s"]), slots.get(i["g"])) for i in r])
+
+    # ------------------------------------------------------------ saving
+    def saved_over_time(self) -> str:
+        months = self.months12()
+        k = {i["month"]: float(i["saved"]) for i in self.rows("SELECT month, saved FROM monthly_kpis WHERE month BETWEEN ? AND ?",
+                                                               self.start12, self.month)}
+        put = [self.put_to_work(m, m) for m in months]
+        return self.stacked(months, [("Put to work", put, AQUA),
+                                     ("Stayed as cash", [k.get(m, 0) - p for m, p in zip(months, put)], YELLOW)],
+                            line=("Could have saved", [k.get(m, 0) for m in months]))
 
     def over_time(self) -> str:
         """Spending stacked by group per month, income as a line on the same € axis."""
@@ -377,27 +505,21 @@ class Report:
             <th>Last balance</th></tr></thead><tbody>{''.join(lines)}</tbody></table></div>{unc_html}"""
 
     def net_worth_mix(self) -> str:
-        """What net worth consists of in the latest month: one bar per bucket, colors as in the area chart."""
+        """What net worth consists of in the latest month, colors as in the area chart."""
         r = self.rows("SELECT * FROM net_worth WHERE month = ?", self.latest)
         if not r:
             return ""
         r = r[0]
-        parts = [("Cash", "cash", BLUE), ("Reserved", "reserved", YELLOW), ("Stocks & ETFs", "investments", AQUA),
-                 ("Property", "property", VIOLET), ("Debt", "debt", ORANGE)]
-        parts = sorted([(n, float(r[k]), slot) for n, k, slot in parts if r[k]], key=lambda x: x[1])
-        # negative bars point left into the axis labels, so their value goes into the label instead
-        parts = [((f"{n} ({eur(v / 1000)}k)" if v < 0 else n), v, slot) for n, v, slot in parts]
-        fig = go.Figure()
-        for name, value, slot in parts:
-            fig.add_bar(y=[name], x=[value], orientation="h", name=name, meta={"slot": slot},
-                        marker_color=LIGHT["series"][slot], text=[eur(value / 1000) + "k" if value > 0 else ""], textposition="outside",
-                        cliponaxis=False, hovertemplate=f"{name}: %{{x:,.0f}} €<extra></extra>")
-        base_layout(fig, height=60 + 44 * len(parts), barcornerradius=4, showlegend=False)
-        fig.update_layout(bargap=0.35, margin=dict(l=8, r=48, t=8, b=8))
-        fig.update_xaxes(showticklabels=False, showgrid=False,  # values sit at the bars
-                         zeroline=True, zerolinecolor=LIGHT["axis"])
-        fig.update_yaxes(showgrid=False, categoryorder="array", categoryarray=[n for n, _, _ in parts])
-        return self.fig(fig)
+        parts = [("Stocks & ETFs", float(r["investments"]), AQUA), ("Property", float(r["property"]), VIOLET),
+                 ("Reserved", float(r["reserved"]), YELLOW), ("Cash", float(r["cash"]), BLUE), ("Debt", float(r["debt"]), ORANGE)]
+        return self.hbars(sorted(parts, key=lambda x: -x[1]))
+
+    def month_mix(self) -> str:
+        """Report month: what could have been saved, and where it went."""
+        m = self.month
+        saved = float(self.one("SELECT saved FROM monthly_kpis WHERE month = ?", m) or 0)
+        put = self.put_to_work(m, m)
+        return self.hbars([("Could have saved", saved, None), ("Put to work", put, AQUA), ("Stayed as cash", saved - put, YELLOW)])
 
     def net_worth(self) -> str:
         r = self.rows("SELECT * FROM net_worth ORDER BY month")
@@ -545,14 +667,26 @@ class Report:
 {warn}
 <section class="tiles">{self.kpis()}</section>
 
-<div class="split" id="networth">
-  <section class="card"><h2>What is our net worth?</h2>{self.net_worth()}</section>
-  <section class="card"><h2>What it consists of, {self.latest:%b %Y}</h2>{self.net_worth_mix()}</section>
+<h2 class="q" id="networth">Net worth</h2>
+<div class="split">
+  <section class="card"><h2>Over time</h2>{self.net_worth()}</section>
+  <section class="card"><h2>{self.latest:%B %Y}</h2>{self.net_worth_mix()}</section>
 </div>
 
-<section class="card" id="time"><h2>How do we spend over time, compared to what comes in?</h2>{self.over_time()}</section>
+<h2 class="q" id="income">Income</h2>
+<div class="split">
+  <section class="card"><h2>Over time</h2>{self.income_over_time()}</section>
+  <section class="card"><h2>{self.month:%B %Y}, by person</h2>{self.income_split()}</section>
+</div>
 
-<section class="card" id="flows"><h2>How does the money flow?</h2>
+<h2 class="q" id="spending">Spending</h2>
+<div class="split">
+  <section class="card"><h2>Over time, by group</h2>{self.spending_over_time()}</section>
+  <section class="card"><h2>{self.month:%B %Y}</h2>{self.spending_split()}</section>
+</div>
+<section class="card" id="where"><h2>All categories, last 12 months</h2>
+<p class="takeaway">{takeaway}</p>{where_chart}</section>
+<section class="card" id="flows"><h2>How the money flows</h2>
   <div class="tabs" role="tablist">
     <button role="tab" aria-selected="true" data-tab="flow12">Last 12 months</button>
     <button role="tab" aria-selected="false" data-tab="flow1">{self.month:%B %Y}</button>
@@ -561,9 +695,13 @@ class Report:
   <div class="tabpanel" id="flow1" hidden>{self.flows(self.month, self.month)}</div>
 </section>
 
-<section class="card" id="where"><h2>Where does the money go, and where could we save?</h2>
-<p class="takeaway">{takeaway}</p>{where_chart}</section>
+<h2 class="q" id="saved">Could have saved</h2>
+<div class="split">
+  <section class="card"><h2>Over time</h2>{self.saved_over_time()}</section>
+  <section class="card"><h2>{self.month:%B %Y}</h2>{self.month_mix()}</section>
+</div>
 
+<h2 class="q">And otherwise</h2>
 <section class="card" id="unusual"><h2>Anything unusual?</h2>{self.unusual()}</section>
 
 {self.after_move()}
@@ -605,6 +743,7 @@ h2 { font-size:15px; margin:0 0 4px; } .note { color:var(--ink2); margin:0 0 12p
 .two > .card { margin-bottom:0; } .two { margin-bottom:16px; }
 .split { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr); gap:16px; margin-bottom:16px; }
 .split > .card { margin-bottom:0; }
+h2.q { font-size:18px; margin:28px 0 10px; scroll-margin-top:16px; }
 @media (max-width: 640px) { .split { grid-template-columns:1fr; } }
 .tiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap:16px; margin-bottom:16px; }
 .tile { background:var(--surface); border:1px solid var(--ring); border-radius:12px; padding:16px; }
